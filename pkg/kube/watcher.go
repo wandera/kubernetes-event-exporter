@@ -1,6 +1,8 @@
 package kube
 
 import (
+	"strconv"
+
 	"github.com/rs/zerolog/log"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/informers"
@@ -8,6 +10,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 )
+
+const annotationKey = "event-exporter-last-seen"
 
 type EventHandler func(event *EnhancedEvent)
 
@@ -17,6 +21,7 @@ type EventWatcher struct {
 	labelCache      *LabelCache
 	annotationCache *AnnotationCache
 	fn              EventHandler
+	clientset       *kubernetes.Clientset
 }
 
 func NewEventWatcher(config *rest.Config, namespace string, fn EventHandler) *EventWatcher {
@@ -30,6 +35,7 @@ func NewEventWatcher(config *rest.Config, namespace string, fn EventHandler) *Ev
 		labelCache:      NewLabelCache(config),
 		annotationCache: NewAnnotationCache(config),
 		fn:              fn,
+		clientset:       clientset,
 	}
 
 	informer.AddEventHandler(watcher)
@@ -55,6 +61,13 @@ func (e *EventWatcher) onEvent(event *corev1.Event) {
 		Str("involvedObject", event.InvolvedObject.Name).
 		Msg("Received event")
 
+	if a, ok := event.Annotations[annotationKey]; ok {
+		if v, err := strconv.Atoi(a); err == nil && v >= int(event.Count) {
+			log.Debug().Msg("Skip event")
+			return
+		}
+	}
+
 	ev := &EnhancedEvent{
 		Event: *event.DeepCopy(),
 	}
@@ -77,6 +90,16 @@ func (e *EventWatcher) onEvent(event *corev1.Event) {
 	}
 
 	e.fn(ev)
+
+	if event.Annotations == nil {
+		event.Annotations = make(map[string]string, 1)
+	}
+	event.Annotations[annotationKey] = strconv.Itoa(int(event.Count))
+	_, err = e.clientset.CoreV1().Events(event.Namespace).Update(event)
+	if err != nil {
+		log.Error().Err(err).Msg("Cannot update annotations of the event")
+	}
+
 	return
 }
 
