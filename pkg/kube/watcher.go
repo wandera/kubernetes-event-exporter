@@ -12,7 +12,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
-const annotationKey = "event-exporter-last-seen"
+const annotationKey = "event-exporter.wandera.com/last-count"
 
 type EventHandler func(event *EnhancedEvent)
 
