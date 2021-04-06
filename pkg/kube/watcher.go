@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/rs/zerolog/log"
@@ -91,16 +92,24 @@ func (e *EventWatcher) onEvent(event *corev1.Event) {
 
 	e.fn(ev)
 
-	if event.Annotations == nil {
-		event.Annotations = make(map[string]string, 1)
-	}
-	event.Annotations[annotationKey] = strconv.Itoa(int(event.Count))
-	_, err = e.clientset.CoreV1().Events(event.Namespace).Update(event)
-	if err != nil {
+	if err = e.annotateEvent(event); err != nil {
 		log.Error().Err(err).Msg("Cannot update annotations of the event")
 	}
 
 	return
+}
+
+func (e *EventWatcher) annotateEvent(event *corev1.Event) error {
+	patchJson := []byte(fmt.Sprintf(`
+		{
+			"metadata": {
+				"annotations": {
+					"%s": "%d"
+				}
+			}
+		}`, annotationKey, event.Count))
+	_, err := e.clientset.CoreV1().Events(event.Namespace).PatchWithEventNamespace(event, patchJson)
+	return err
 }
 
 func (e *EventWatcher) OnDelete(obj interface{}) {
